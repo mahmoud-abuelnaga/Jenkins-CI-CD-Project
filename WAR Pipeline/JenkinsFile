@@ -34,6 +34,12 @@ pipeline{
             }
         }
 
+        stage("Checkstyle analysis") {
+            steps {
+                sh "mvn checkstyle:checkstyle"
+            }
+        }
+
         stage("Build") {
             steps {
                 sh "mvn clean install"
@@ -47,12 +53,6 @@ pipeline{
                 failure {
                     echo "Build failed!"
                 }
-            }
-        }
-
-        stage("Checkstyle analysis") {
-            steps {
-                sh "mvn checkstyle:checkstyle"
             }
         }
 

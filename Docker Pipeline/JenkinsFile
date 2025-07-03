@@ -1,0 +1,110 @@
+def dockerImage
+
+pipeline{
+    agent any
+
+    environment {
+        aws_region = "us-east-1"
+        registry_url = "886436923743.dkr.ecr.us-east-1.amazonaws.com"
+        image_name = "vproappimg"
+        image_url = "${registry_url}/${image_name}"
+        build_number = "${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage("Clone Repo") {
+            steps {
+                git branch: "docker", url: "https://github.com/hkhcoder/vprofile-project.git"
+            }
+        }
+
+        stage("Unit test") {
+            steps {
+                sh "mvn clean test"
+            }
+        }
+
+        stage("Checkstyele analysis") {
+            steps {
+                sh "mvn checkstyle:checkstyle"
+            }
+        }
+
+        stage("Build WAR") {
+            steps {
+                sh "mvn clean install -DskipTests"
+            }
+
+            post {
+                success {
+                    echo "Build Successful!"
+                    archiveArtifacts artifacts: "**/target/*.war", fingerprint: true
+                }
+            }
+        }
+
+        stage("SonarQube Analysis") {
+            environment {
+                sonar_home = tool name: "Sonar Scanner 7.1.0"
+            }
+
+            steps {
+                sh """${sonar_home}/bin/sonar-scanner \
+                        -D sonar.projectKey=vprofile \
+                        -D sonar.projectName=vprofile \
+                        -D sonar.projectVersion=1.0 \
+                        -D sonar.sources=src/main/java \
+                        -D sonar.java.binaries=target/classes \
+                        -D sonar.junit.reportsPath=target/surefire-reports/ \
+                        -D sonar.java.checkstyle.reportPaths=target/checkstyle-result.xml \
+                        -D sonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                    """
+            }
+        }
+
+        stage("Quality Gate") {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage("Build Docker Image") {
+            steps {
+                script {
+                    dockerImage = docker.build("${image_url}:${build_number}", "-f ./Docker-files/app/multisage/Dockerfile")
+                }
+            }
+        }
+
+        stage("Authorize Access to Registry") {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "legion5-ecs-ecr-cred"]]) {
+                    sh "aws ecr get-login-password --region ${aws_region} | docker login --username AWS --password-stdin ${registry_url}"
+                }
+            }
+        }
+
+        stage("Push Docker Image") {
+            steps {
+                script {
+                    dockerImage.push("${build_number}")
+                    dockerImage.push("latest")
+                }
+            }
+        }
+
+        stage("Remove Local Docker Image") {
+            steps {
+                script {
+                    sh "docker rmi ${image_url}:${build_number}"
+                    sh "docker rmi ${image_url}:latest"
+                }
+            }
+        }
+
+        stage("Logout ")
+
+    }
+}
