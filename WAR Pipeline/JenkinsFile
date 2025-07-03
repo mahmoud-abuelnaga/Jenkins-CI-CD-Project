@@ -1,0 +1,116 @@
+def color_map = [
+    "SUCCESS": "good",
+    "FAILURE": "danger",
+    "UNSTABLE": "warning",
+    "ABORTED": "warning"
+]
+
+pipeline{
+    agent any
+    
+    tools {
+        maven "Maven 3.9.10"
+        jdk "JDK 21"
+    }
+
+    stages {
+        stage("Set Version") {
+            steps {
+                script {
+                    env.artifact_ver = sh(script: 'date -Iseconds', returnStdout: true).trim()
+                }
+            }
+        }
+
+        stage("Fetch") {
+            steps {
+                git branch: "atom", url: "https://github.com/hkhcoder/vprofile-project.git"
+            }
+        }
+
+        stage("Unit Tests") {
+            steps {
+                sh "mvn clean test"
+            }
+        }
+
+        stage("Build") {
+            steps {
+                sh "mvn clean install"
+            }
+            post {
+                success {
+                    echo "Build successful!"
+                    archiveArtifacts artifacts: "**/target/*.war", fingerprint: true
+                }
+
+                failure {
+                    echo "Build failed!"
+                }
+            }
+        }
+
+        stage("Checkstyle analysis") {
+            steps {
+                sh "mvn checkstyle:checkstyle"
+            }
+        }
+
+        stage("SonarQube analysis") {
+            environment {
+                sonar_home= tool name: "Sonar Scanner 7.1.0"
+            }
+
+            steps {
+                withSonarQubeEnv("local-sonar-server") {
+                    sh """${sonar_home}/bin/sonar-scanner \
+                        -D sonar.projectKey=vprofile \
+                        -D sonar.projectName=vprofile \
+                        -D sonar.projectVersion=1.0 \
+                        -D sonar.sources=src/main/java \
+                        -D sonar.java.binaries=target/classes \
+                        -D sonar.junit.reportsPath=target/surefire-reports/ \
+                        -D sonar.java.checkstyle.reportPaths=target/checkstyle-result.xml \
+                        -D sonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                    """
+                }
+            }
+        }
+
+        stage("Quality Gate") {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage("Artifact Upload") {
+            steps {
+                nexusArtifactUploader(
+                    nexusVersion: 'nexus3',
+                    protocol: 'http',
+                    nexusUrl: '192.168.1.200:80',
+                    groupId: 'com.vprofile',
+                    version: "${env.artifact_ver}",
+                    repository: 'vprofile-repo',
+                    credentialsId: 'local-nexus-cred',
+                    artifacts: [
+                        [artifactId: "vproapp",
+                        classifier: '',
+                        file: "target/vprofile-v2.war",
+                        type: 'war']
+                    ]
+                )
+            }
+        }
+
+    }
+
+    post {
+        always {
+           echo "Sending notification"
+           slackSend channel: "#jenkins-channel", color: color_map[currentBuild.currentResult], message: "Build Result: ${currentBuild.currentResult}\n Job: ${env.JOB_NAME}\n Build Number: ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}"
+        }
+    }
+}
