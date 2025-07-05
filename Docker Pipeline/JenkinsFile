@@ -3,6 +3,11 @@ def dockerImage
 pipeline{
     agent any
 
+    tools {
+        maven "mvn3.9.10"
+        jdk "jdk21"
+    }
+
     environment {
         aws_region = "us-east-1"
         registry_url = "886436923743.dkr.ecr.us-east-1.amazonaws.com"
@@ -12,44 +17,49 @@ pipeline{
     }
 
     stages {
-        stage("Clone Repo") {
+        stage("Fetch") {
             steps {
                 git branch: "docker", url: "https://github.com/hkhcoder/vprofile-project.git"
             }
         }
 
-        stage("Unit test") {
+        stage("Unit Tests") {
             steps {
                 sh "mvn clean test"
             }
         }
 
-        stage("Checkstyele analysis") {
+        stage("Checkstyle analysis") {
             steps {
                 sh "mvn checkstyle:checkstyle"
             }
         }
 
-        stage("Build WAR") {
+        stage("Build") {
             steps {
-                sh "mvn clean install -DskipTests"
+                sh "mvn clean install"
             }
 
             post {
                 success {
-                    echo "Build Successful!"
+                    echo "Build successful!"
                     archiveArtifacts artifacts: "**/target/*.war", fingerprint: true
+                }
+
+                failure {
+                    echo "Build failed!"
                 }
             }
         }
 
-        stage("SonarQube Analysis") {
+        stage("SonarQube analysis") {
             environment {
-                sonar_home = tool name: "Sonar Scanner 7.1.0"
+                sonar_home= tool name: "sonarscanner7.1.0"
             }
 
             steps {
-                sh """${sonar_home}/bin/sonar-scanner \
+                withSonarQubeEnv("local-sonar-server") {
+                    sh """${sonar_home}/bin/sonar-scanner \
                         -D sonar.projectKey=vprofile \
                         -D sonar.projectName=vprofile \
                         -D sonar.projectVersion=1.0 \
@@ -59,6 +69,7 @@ pipeline{
                         -D sonar.java.checkstyle.reportPaths=target/checkstyle-result.xml \
                         -D sonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
                     """
+                }
             }
         }
 
@@ -73,14 +84,14 @@ pipeline{
         stage("Build Docker Image") {
             steps {
                 script {
-                    dockerImage = docker.build("${image_url}:${build_number}", "-f ./Docker-files/app/multisage/Dockerfile")
+                    dockerImage = docker.build("${image_url}:${build_number}", "-f ./Docker-files/app/multistage/Dockerfile .")
                 }
             }
         }
 
         stage("Authorize Access to Registry") {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "legion5-ecs-ecr-cred"]]) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "ecs-ecr-cred"]]) {
                     sh "aws ecr get-login-password --region ${aws_region} | docker login --username AWS --password-stdin ${registry_url}"
                 }
             }
@@ -104,7 +115,11 @@ pipeline{
             }
         }
 
-        stage("Logout ")
+        stage("Logout from Docker Registry") {
+            steps {
+                sh "docker logout ${registry_url}"
+            }
+        }
 
     }
 }

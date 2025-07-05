@@ -9,8 +9,8 @@ pipeline{
     agent any
     
     tools {
-        maven "Maven 3.9.10"
-        jdk "JDK 21"
+        maven "mvn3.9.10"
+        jdk "jdk21"
     }
 
     stages {
@@ -58,7 +58,7 @@ pipeline{
 
         stage("SonarQube analysis") {
             environment {
-                sonar_home= tool name: "Sonar Scanner 7.1.0"
+                sonar_home= tool name: "sonarscanner7.1.0"
             }
 
             steps {
