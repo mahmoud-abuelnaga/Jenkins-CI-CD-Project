@@ -14,6 +14,8 @@ pipeline{
         image_name = "vproappimg"
         image_url = "${registry_url}/${image_name}"
         build_number = "${env.BUILD_NUMBER}"
+        ecs_cluster = "cluster-vproapp"
+        ecs_service = "service-vproapp"
     }
 
     stages {
@@ -118,6 +120,14 @@ pipeline{
         stage("Logout from Docker Registry") {
             steps {
                 sh "docker logout ${registry_url}"
+            }
+        }
+        
+        stage("Update ECS Containers") {
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "ecs-ecr-cred"]]) {
+                    sh "aws ecs update-service --cluster ${ecs_cluster} --service ${ecs_service} --force-new-deployment --region ${aws_region}"
+                }
             }
         }
 
